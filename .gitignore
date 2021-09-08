@@ -1,0 +1,5 @@
+/*pass*
+/originals/**
+/playbooks/connection_plugins/**
+**/__pycache__/**
+
