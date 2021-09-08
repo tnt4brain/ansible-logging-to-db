@@ -1,0 +1,10 @@
+/*pass*
+/originals/**
+/run.sh
+/playbooks/connection_plugins/**
+/playbooks/test.yml
+/playbooks/library/**
+**/__pycache__/**
+logs_example.sql
+inventory.yml
+
