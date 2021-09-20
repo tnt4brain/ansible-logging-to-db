@@ -4,8 +4,15 @@
 # Copyright: (c) 2019, Tobias Birkefeld (@tcraxs) <t@craxs.de>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
+
+from ansible.module_utils.postgres import dict_wrap
 
 ANSIBLE_METADATA = {
     'metadata_version': '1.1',
@@ -290,13 +297,6 @@ newschema:
 '''
 
 
-try:
-    from psycopg2.extras import DictCursor
-except ImportError:
-    # psycopg2 is checked by connect_to_db()
-    # from ansible.module_utils.postgres
-    pass
-
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.database import pg_quote_identifier
 from ansible.module_utils.postgres import (
@@ -369,19 +369,17 @@ class Sequence(object):
                  "LEFT JOIN pg_namespace n ON n.oid = c.relnamespace "
                  "WHERE NOT pg_is_other_temp_schema(n.oid) "
                  "AND c.relkind = 'S'::\"char\" "
-                 "AND sequence_name = %(name)s "
-                 "AND sequence_schema = %(schema)s")
+                 "AND sequence_name = (%s) "
+                 "AND sequence_schema = (%s)")
 
         res = exec_sql(self, query,
-                       query_params={'name': self.name, 'schema': self.schema},
-                       add_to_executed=False)
-
+                       query_params=[self.name, self.schema],
+                       add_to_executed=False, hacky_dict=True)
         if not res:
             self.exists = False
             return False
 
         if res:
-            self.exists = True
             self.schema = res[0]['schemaname']
             self.name = res[0]['sequencename']
             self.owner = res[0]['sequenceowner']
@@ -391,6 +389,7 @@ class Sequence(object):
             self.maxvalue = res[0]['max_value']
             self.increment = res[0]['increment_by']
             self.cycle = res[0]['cycle']
+            self.exists = True
 
     def create(self):
         """Implements CREATE SEQUENCE command behavior."""
@@ -517,7 +516,7 @@ def main():
     # Connect to DB and make cursor object:
     conn_params = get_conn_params(module, module.params)
     db_connection = connect_to_db(module, conn_params, autocommit=autocommit)
-    cursor = db_connection.cursor(cursor_factory=DictCursor)
+    cursor = db_connection.cursor()
 
     ##############
     # Create the object and do main job:

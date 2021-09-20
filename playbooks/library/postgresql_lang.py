@@ -4,6 +4,11 @@
 # (c) 2014, Jens Depuydt <http://www.jensd.be>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -179,23 +184,23 @@ executed_queries = []
 
 def lang_exists(cursor, lang):
     """Checks if language exists for db"""
-    query = "SELECT lanname FROM pg_language WHERE lanname = %(lang)s"
-    cursor.execute(query, {'lang': lang})
+    query = "SELECT lanname FROM pg_language WHERE lanname = %s"
+    cursor.execute(query, [lang])
     return cursor.rowcount > 0
 
 
 def lang_istrusted(cursor, lang):
     """Checks if language is trusted for db"""
-    query = "SELECT lanpltrusted FROM pg_language WHERE lanname = %(lang)s"
-    cursor.execute(query, {'lang': lang})
+    query = "SELECT lanpltrusted FROM pg_language WHERE lanname = %s"
+    cursor.execute(query, [lang])
     return cursor.fetchone()[0]
 
 
 def lang_altertrust(cursor, lang, trust):
     """Changes if language is trusted for db"""
-    query = "UPDATE pg_language SET lanpltrusted = %(trust)s WHERE lanname = %(lang)s"
-    cursor.execute(query, {'trust': trust, 'lang': lang})
-    executed_queries.append(cursor.mogrify(query, {'trust': trust, 'lang': lang}))
+    query = "UPDATE pg_language SET lanpltrusted = %s WHERE lanname = %s"
+    cursor.execute(query, (trust, lang))
+    executed_queries.append(query % (trust, lang))
     return True
 
 

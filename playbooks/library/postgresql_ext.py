@@ -4,6 +4,11 @@
 # Copyright: Ansible Project
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -173,12 +178,7 @@ import traceback
 
 from distutils.version import LooseVersion
 
-try:
-    from psycopg2.extras import DictCursor
-except ImportError:
-    # psycopg2 is checked by connect_to_db()
-    # from ansible.module_utils.postgres
-    pass
+
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.postgres import (
@@ -286,7 +286,7 @@ def ext_get_versions(cursor, ext):
         # Make the list of available versions:
         for line in res:
             if LooseVersion(line[0]) > LooseVersion(current_version):
-                available_versions.append(line['version'])
+                available_versions.append(line[0])
 
     if current_version == '0':
         current_version = False
@@ -327,7 +327,7 @@ def main():
 
     conn_params = get_conn_params(module, module.params)
     db_connection = connect_to_db(module, conn_params, autocommit=True)
-    cursor = db_connection.cursor(cursor_factory=DictCursor)
+    cursor = db_connection.cursor()
 
     try:
         # Get extension info and available versions:

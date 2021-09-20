@@ -4,6 +4,11 @@
 # Copyright: (c) 2019, Andrew Klychkov (@Andersson007) <aaklychkov@mail.ru>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
@@ -139,13 +144,6 @@ queries:
   sample: [ 'REASSIGN OWNED BY "bob" TO "alice"' ]
 '''
 
-try:
-    from psycopg2.extras import DictCursor
-except ImportError:
-    # psycopg2 is checked by connect_to_db()
-    # from ansible.module_utils.postgres
-    pass
-
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.database import pg_quote_identifier
 from ansible.module_utils.postgres import (
@@ -276,50 +274,49 @@ class PgOwnership(object):
         """Return True if self.role is the current object owner."""
         if self.obj_type == 'table':
             query = ("SELECT 1 FROM pg_tables "
-                     "WHERE tablename = %(obj_name)s "
-                     "AND tableowner = %(role)s")
+                     "WHERE tablename = %s "
+                     "AND tableowner = %s")
 
         elif self.obj_type == 'database':
             query = ("SELECT 1 FROM pg_database AS d "
                      "JOIN pg_roles AS r ON d.datdba = r.oid "
-                     "WHERE d.datname = %(obj_name)s "
-                     "AND r.rolname = %(role)s")
+                     "WHERE d.datname = %s "
+                     "AND r.rolname = %s")
 
         elif self.obj_type == 'function':
             query = ("SELECT 1 FROM pg_proc AS f "
                      "JOIN pg_roles AS r ON f.proowner = r.oid "
-                     "WHERE f.proname = %(obj_name)s "
-                     "AND r.rolname = %(role)s")
+                     "WHERE f.proname = %s "
+                     "AND r.rolname = %s")
 
         elif self.obj_type == 'sequence':
             query = ("SELECT 1 FROM pg_class AS c "
                      "JOIN pg_roles AS r ON c.relowner = r.oid "
-                     "WHERE c.relkind = 'S' AND c.relname = %(obj_name)s "
-                     "AND r.rolname = %(role)s")
+                     "WHERE c.relkind = 'S' AND c.relname = %s "
+                     "AND r.rolname = %s")
 
         elif self.obj_type == 'schema':
             query = ("SELECT 1 FROM information_schema.schemata "
-                     "WHERE schema_name = %(obj_name)s "
-                     "AND schema_owner = %(role)s")
+                     "WHERE schema_name = %s "
+                     "AND schema_owner = %s")
 
         elif self.obj_type == 'tablespace':
             query = ("SELECT 1 FROM pg_tablespace AS t "
                      "JOIN pg_roles AS r ON t.spcowner = r.oid "
-                     "WHERE t.spcname = %(obj_name)s "
-                     "AND r.rolname = %(role)s")
+                     "WHERE t.spcname = %s "
+                     "AND r.rolname = %s")
 
         elif self.obj_type == 'view':
             query = ("SELECT 1 FROM pg_views "
-                     "WHERE viewname = %(obj_name)s "
-                     "AND viewowner = %(role)s")
+                     "WHERE viewname = %s "
+                     "AND viewowner = %s")
 
         elif self.obj_type == 'matview':
             query = ("SELECT 1 FROM pg_matviews "
-                     "WHERE matviewname = %(obj_name)s "
-                     "AND matviewowner = %(role)s")
+                     "WHERE matviewname = %s "
+                     "AND matviewowner = %s")
 
-        query_params = {'obj_name': self.obj_name, 'role': self.role}
-        return exec_sql(self, query, query_params, add_to_executed=False)
+        return exec_sql(self, query, (self.obj_name,self.role,), add_to_executed=False)
 
     def __set_db_owner(self):
         """Set the database owner."""
@@ -371,8 +368,8 @@ class PgOwnership(object):
 
     def __role_exists(self, role):
         """Return True if role exists, otherwise return False."""
-        query_params = {'role': role}
-        query = "SELECT 1 FROM pg_roles WHERE rolname = %(role)s"
+        query_params = (role,)
+        query = "SELECT 1 FROM pg_roles WHERE rolname = %s"
         return exec_sql(self, query, query_params, add_to_executed=False)
 
 
@@ -412,7 +409,7 @@ def main():
 
     conn_params = get_conn_params(module, module.params)
     db_connection = connect_to_db(module, conn_params, autocommit=False)
-    cursor = db_connection.cursor(cursor_factory=DictCursor)
+    cursor = db_connection.cursor()
 
     ##############
     # Create the object and do main job:

@@ -5,6 +5,11 @@
 # Copyright: (c) 2019, Andrew Klychkov (@Andersson007) <aaklychkov@mail.ru>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -159,13 +164,6 @@ parameters:
 '''
 
 
-try:
-    from psycopg2.extras import DictCursor
-except ImportError:
-    # psycopg2 is checked by connect_to_db()
-    # from ansible.module_utils.postgres
-    pass
-
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.database import pg_quote_identifier
 from ansible.module_utils.postgres import (
@@ -173,6 +171,7 @@ from ansible.module_utils.postgres import (
     exec_sql,
     get_conn_params,
     postgres_common_argument_spec,
+    dict_wrap
 )
 from ansible.module_utils.six import iteritems
 
@@ -248,11 +247,13 @@ class PgPublication():
             True if the publication with ``self.name`` exists, False otherwise.
         """
 
-        pub_info = self.__get_general_pub_info()
+        tmp = self.__get_general_pub_info()
 
-        if not pub_info:
+        if not tmp:
             # Publication does not exist:
             return False
+
+        pub_info = dict_wrap(self.cursor, tmp)
 
         self.attrs['owner'] = pub_info.get('pubowner')
 
@@ -266,7 +267,7 @@ class PgPublication():
 
         # If alltables flag is False, get the list of targeted tables:
         if not pub_info.get('puballtables'):
-            table_info = self.__get_tables_pub_info()
+            table_info = [x for x in self.__get_tables_pub_info()]
             # Join sublists [['schema', 'table'], ...] to ['schema.table', ...]
             # for better representation:
             for i, schema_and_table in enumerate(table_info):
@@ -609,7 +610,7 @@ def main():
     conn_params = get_conn_params(module, module.params)
     # We check publication state without DML queries execution, so set autocommit:
     db_connection = connect_to_db(module, conn_params, autocommit=True)
-    cursor = db_connection.cursor(cursor_factory=DictCursor)
+    cursor = db_connection.cursor()
 
     # Check version:
     if cursor.connection.server_version < SUPPORTED_PG_VERSION:

@@ -70,6 +70,15 @@ from .exceptions import DatabaseError, Error, InterfaceError
 # ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
 # POSSIBILITY OF SUCH DAMAGE.
 
+__author__ = "Mathieu Fenniak"
+
+# Contribution:
+# pg8000 driver adaptation for Ansible drop-in
+# (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
+__authors__ = ["Mathieu Fenniak", "Sergey Pechenko"]
 
 def to_statement(query):
     OUTSIDE = 0  # outside quoted string

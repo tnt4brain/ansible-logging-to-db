@@ -5,6 +5,11 @@
 # Copyright: (c) 2019, Andrew Klychkov (@Andersson007) <aaklychkov@mail.ru>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
@@ -168,14 +173,6 @@ rowcount:
     sample: 5
 '''
 
-try:
-    from ansible.module_utils.pg8000.dbapi import ProgrammingError as ProgrammingError
-    from psycopg2.extras import DictCursor
-except ImportError:
-    # it is needed for checking 'no result to fetch' in main(),
-    # psycopg2 availability will be checked by connect_to_db() into
-    # ansible.module_utils.postgres
-    pass
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.postgres import (
@@ -185,7 +182,6 @@ from ansible.module_utils.postgres import (
 )
 from ansible.module_utils._text import to_native
 from ansible.module_utils.six import iteritems
-from pprint import pformat
 
 # ===========================================
 # Module execution.
@@ -301,7 +297,7 @@ def main():
     if rowcount != 0:
         try:
             query_result = [dict(row) for row in cursor.fetchall()]
-        except ProgrammingError as e:
+        except db_connection.ProgrammingError as e:
             if to_native(e) == 'no results to fetch':
                 query_result = {}
             elif to_native(e) == 'no result set':

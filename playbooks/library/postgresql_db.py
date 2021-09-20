@@ -4,6 +4,11 @@
 # Copyright: Ansible Project
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -222,8 +227,8 @@ def set_conn_limit(cursor, db, conn_limit):
 
 
 def get_encoding_id(cursor, encoding):
-    query = "SELECT pg_char_to_encoding(%(encoding)s) AS encoding_id;"
-    cursor.execute(query, {'encoding': encoding})
+    query = "SELECT pg_char_to_encoding(%s) AS encoding_id;"
+    cursor.execute(query, [encoding])
     return cursor.fetchone()['encoding_id']
 
 
@@ -259,6 +264,7 @@ def db_delete(cursor, db):
 
 def db_create(cursor, db, owner, template, encoding, lc_collate, lc_ctype, conn_limit, tablespace):
     params = {k: v for k,v in dict(enc=encoding, collate=lc_collate, ctype=lc_ctype, conn_limit=conn_limit, tablespace=tablespace).items() if v is not ''}
+    param_list = []
     if not db_exists(cursor, db):
         query_fragments = ['CREATE DATABASE %s' % pg_quote_identifier(db, 'database')]
         if owner:
@@ -267,16 +273,19 @@ def db_create(cursor, db, owner, template, encoding, lc_collate, lc_ctype, conn_
             query_fragments.append('TEMPLATE %s' % pg_quote_identifier(template, 'database'))
         if encoding:
             query_fragments.append('ENCODING %(enc)s')
+            param_list.append(params['encoding'])
         if lc_collate:
             query_fragments.append('LC_COLLATE %(collate)s')
+            param_list.append(params['collate'])
         if lc_ctype:
             query_fragments.append('LC_CTYPE %(ctype)s')
+            param_list.append(params['ctype'])
         if tablespace:
             query_fragments.append('TABLESPACE %s' % pg_quote_identifier(tablespace, 'tablespace'))
         if conn_limit:
             query_fragments.append("CONNECTION LIMIT %(conn_limit)s" % {"conn_limit": conn_limit})
         query = ' '.join(query_fragments)
-        cursor.execute(query, params)
+        cursor.execute(query, param_list)
         return True
     else:
         db_info = get_db_info(cursor, db)

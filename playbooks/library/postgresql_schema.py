@@ -4,6 +4,11 @@
 # Copyright: (c) 2016, Ansible Project
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -126,12 +131,6 @@ queries:
 
 import traceback
 
-try:
-    from psycopg2.extras import DictCursor
-except ImportError:
-    # psycopg2 is checked by connect_to_db()
-    # from ansible.module_utils.postgres
-    pass
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.postgres import (
@@ -165,15 +164,15 @@ def set_owner(cursor, schema, owner):
 def get_schema_info(cursor, schema):
     query = ("SELECT schema_owner AS owner "
              "FROM information_schema.schemata "
-             "WHERE schema_name = %(schema)s")
-    cursor.execute(query, {'schema': schema})
+             "WHERE schema_name = (%s)")
+    cursor.execute(query, [schema])
     return cursor.fetchone()
 
 
 def schema_exists(cursor, schema):
     query = ("SELECT schema_name FROM information_schema.schemata "
-             "WHERE schema_name = %(schema)s")
-    cursor.execute(query, {'schema': schema})
+             "WHERE schema_name = (%s)")
+    cursor.execute(query, [schema])
     return cursor.rowcount == 1
 
 
@@ -245,7 +244,7 @@ def main():
 
     conn_params = get_conn_params(module, module.params)
     db_connection = connect_to_db(module, conn_params, autocommit=True)
-    cursor = db_connection.cursor(cursor_factory=DictCursor)
+    cursor = db_connection.cursor()
 
     try:
         if module.check_mode:

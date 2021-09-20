@@ -80,6 +80,13 @@ del get_versions
 
 __author__ = "Mathieu Fenniak"
 
+# Contribution:
+# pg8000 driver adaptation for Ansible drop-in
+# (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
+__authors__ = ["Mathieu Fenniak", "Sergey Pechenko"]
 
 ROWID = OID
 

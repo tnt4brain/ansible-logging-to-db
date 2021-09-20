@@ -8,6 +8,9 @@
       postgresql_db:
         name: "icinga2"
         login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+      vars:
+        created_by: "Sergey Pechenko"
+        telegram: "@tnt4brain"
     - name: "Create functions (loop)"
       postgresql_query:
         db: "icinga2"
@@ -59,6 +62,7 @@
         login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
     - name: "Create table #2"
       postgresql_table:
+        db: icinga2
         name: icinga_commands
         columns:
           - 'command_id bigserial'
@@ -75,5 +79,119 @@
         name: testuser
         db: icinga2
         priv: ALL
+        password: 'THAT'
+        # does not work
+        encrypted: true
         role_attr_flags: superuser
         login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+    - name: "Create group 1"
+      postgresql_user:
+        name: read_only
+        db: icinga2
+        priv: ALL
+        role_attr_flags: NOLOGIN
+        login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+# When got bitten by SELinux,
+# set system_u:object_r:postgresql_db_t:s0 on target dir
+# this will fix things
+#    - name: "Create tablespace"
+#      postgresql_tablespace:
+#        name: this_test
+#        state: absent
+#        login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+#        location: /tmp/_pg_test_tablespace_
+    - name: "Create sequence"
+      postgresql_sequence:
+        name: serial
+        start: 101
+        login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+    - name: "Create sequence #2"
+      postgresql_sequence:
+        name: serial
+        start: 101
+        login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+    - name: "Delete sequence #2"
+      postgresql_sequence:
+        name: serial
+        state: absent
+        login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+    - name: "Grant privileges"
+      postgresql_privs:
+        database: icinga2
+        state: present
+        privs: ALL
+        type: table
+        objs: icinga_commands
+        schema: public
+        roles: testuser
+        grant_option: no
+        login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+    - name: "Create schema"
+      postgresql_schema:
+        db: icinga2
+        name: synthezoid
+        state: present
+        login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+    - name: "Pingy"
+      postgresql_ping:
+        login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+    - name: "Info"
+      postgresql_info:
+        login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+    - name: "Adds pg_trgm extension"
+      postgresql_ext:
+        name: pg_trgm
+        db: icinga2
+        schema: synthezoid
+        login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+    - name: "Add index"
+      postgresql_idx:
+        login_unix_socket: "/var/run/postgresql/.s.PGSQL.5432"
+        db: icinga2
+        table: "icinga_commands"
+        idxname: "test"
+        columns:
+          - "command_id"
+        state: present
+    - name: "pg_hda.conf content"
+      postgresql_pg_hba:
+        dest: /var/opt/rh/rh-postgresql12/lib/pgsql/data/pg_hba.conf
+    - name: Add language plpython
+      postgresql_lang:
+        db: icinga2
+        lang: plpythonu
+        state: present
+        trust: yes
+        force_trust: yes
+    - name: Add slot
+      postgresql_slot:
+        slot_name: physical_gg
+        db: icinga2
+        state: present
+    - name: Set wal_log_hints parameter to default value (remove parameter from postgresql.auto.conf)
+      postgresql_set:
+        name: wal_log_hints
+        value: default
+    - name: Give ownership
+      postgresql_owner:
+        db: icinga2
+        obj_name: icinga_commands
+        obj_type: table
+        new_owner: testuser
+    - name: Tets publication
+      postgresql_publication:
+        db: icinga2
+        name: test_pub
+        state: present
+        tables:
+          - icinga_commands
+    - name: Copy data from acme table to file /tmp/data.txt in text format, TAB-separated
+      postgresql_copy:
+        src: icinga_commands
+        copy_to: /tmp/data.txt
+    - name: Grant role read_only to test user
+      postgresql_membership:
+        group: read_only
+        target_roles:
+        - testuser
+        state: present

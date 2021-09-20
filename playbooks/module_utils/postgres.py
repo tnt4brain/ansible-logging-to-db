@@ -27,10 +27,25 @@
 # LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE
 # USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-pg8k = None  # This line needs for unit tests
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
+pg8k = None  # This line needs for unit tests (?)
 try:
     from . import pg8000
+
     HAS_PG8K = True
+    pg8000.paramstyle = 'pyformat'
+    DataError = pg8000.DataError
+    DatabaseError = pg8000.DatabaseError
+    IntegrityError = pg8000.IntegrityError
+    InterfaceError = pg8000.InterfaceError
+    InternalError = pg8000.InternalError
+    NotSupportedError = pg8000.NotSupportedError
+    OperationalError = pg8000.OperationalError
+    ProgrammingError = pg8000.ProgrammingError
 except ImportError:
     HAS_PG8K = False
 
@@ -38,6 +53,10 @@ from ansible.module_utils.basic import missing_required_lib
 from ansible.module_utils._text import to_native
 from ansible.module_utils.six import iteritems
 from distutils.version import LooseVersion
+
+
+def dict_wrap(cursor: pg8000.Cursor, values: list):
+    return dict(zip([x[0] for x in cursor.description], values))
 
 
 def postgres_common_argument_spec():
@@ -48,7 +67,7 @@ def postgres_common_argument_spec():
     """
     return dict(
         login_user=dict(default='postgres'),
-        login_password=dict(default='', no_log=True),
+        login_password=dict(default=''), # no_log=True),
         login_host=dict(default=''),
         login_unix_socket=dict(default=''),
         port=dict(type='int', default=5432, aliases=['login_port']),
@@ -69,7 +88,7 @@ def ensure_required_libs(module):
 def connect_to_db(module, conn_params, autocommit=False, fail_on_conn=True):
     """Connect to a PostgreSQL database.
 
-    Return psycopg2 connection object.
+    Return pg8000 connection object.
 
     Args:
         module (AnsibleModule) -- object of ansible.module_utils.basic.AnsibleModule class
@@ -86,14 +105,14 @@ def connect_to_db(module, conn_params, autocommit=False, fail_on_conn=True):
         del conn_params['sslmode']
         db_connection = pg8000.connect(**conn_params)
         if autocommit:
-            if LooseVersion(psycopg2.__version__) >= LooseVersion('2.4.2'):
-                db_connection.set_session(autocommit=True)
-            else:
-                db_connection.set_isolation_level(psycopg2.extensions.ISOLATION_LEVEL_AUTOCOMMIT)
-
+            db_connection.autocommit = True
+        version_tuple_str = [tple[1] for tple in db_connection.parameter_statuses if tple[0] == b'server_version'][
+            0].decode('utf-8')
+        version_list = (version_tuple_str.split('.') + [0])[0:3]
+        db_connection.server_version = int(''.join(["{:02}".format(int(x)) for x in version_list]))
         # Switch role, if specified:
         if module.params.get('session_role'):
-            cursor = db_connection.cursor(cursor_factory=psycopg2.extras.DictCursor)
+            cursor = db_connection.cursor()
             try:
                 cursor.execute('SET ROLE %s' % module.params['session_role'])
             except Exception as e:
@@ -122,7 +141,7 @@ def connect_to_db(module, conn_params, autocommit=False, fail_on_conn=True):
     return db_connection
 
 
-def exec_sql(obj, query, query_params=None, ddl=False, add_to_executed=True, dont_exec=False):
+def exec_sql(obj, query, query_params=None, ddl=False, add_to_executed=True, dont_exec=False, **kwargs):
     """Execute SQL.
 
     Auxiliary function for PostgreSQL user classes.
@@ -163,13 +182,18 @@ def exec_sql(obj, query, query_params=None, ddl=False, add_to_executed=True, don
 
         if add_to_executed:
             if query_params is not None:
-                obj.executed_queries.append(obj.cursor.mogrify(query, query_params))
+                obj.executed_queries.append(query % (*query_params,))
             else:
                 obj.executed_queries.append(query)
 
         if not ddl:
             res = obj.cursor.fetchall()
-            return res
+            if 'hacky_dict' in kwargs:
+                tmp_descr = (x[0] for x in obj.cursor.description)
+                tmp_res = [dict(zip(tmp_descr, x)) for x in res]
+                return tmp_res
+            else:
+                return res
         return True
     except Exception as e:
         obj.module.fail_json(msg="Cannot execute SQL '%s': %s" % (query, to_native(e)))

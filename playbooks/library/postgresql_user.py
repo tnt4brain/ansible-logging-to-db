@@ -4,7 +4,13 @@
 # Copyright: Ansible Project
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
+
 __metaclass__ = type
 
 ANSIBLE_METADATA = {
@@ -247,10 +253,10 @@ from ansible.module_utils.postgres import (
     exec_sql,
     get_conn_params,
     postgres_common_argument_spec,
+    dict_wrap
 )
 from ansible.module_utils._text import to_bytes, to_native
 from ansible.module_utils.six import iteritems
-
 
 FLAGS = ('SUPERUSER', 'CREATEROLE', 'CREATEDB', 'INHERIT', 'LOGIN', 'REPLICATION')
 FLAGS_BY_VERSION = {'BYPASSRLS': 90500}
@@ -275,6 +281,20 @@ class InvalidFlagsError(Exception):
 class InvalidPrivsError(Exception):
     pass
 
+# Should be 'UNENCRYPTED' for Postgres<10
+UNENCRYPTED_VALUE = ''
+
+# paramstyle
+# String constant stating the type of parameter marker formatting expected by the interface. Possible values are [2]:
+#
+# paramstyle	Meaning
+# qmark	Question mark style, e.g. ...WHERE name=?
+# numeric	Numeric, positional style, e.g. ...WHERE name=:1
+# named	Named style, e.g. ...WHERE name=:name
+# format	ANSI C printf format codes, e.g. ...WHERE name=%s
+# pyformat	Python extended format codes, e.g. ...WHERE name=%(name)s
+
+
 # ===========================================
 # PostgreSQL module specific support methods.
 #
@@ -284,8 +304,9 @@ def user_exists(cursor, user):
     # The PUBLIC user is a special case that is always there
     if user == 'PUBLIC':
         return True
-    query = "SELECT rolname FROM pg_roles WHERE rolname=%(user)s"
-    cursor.execute(query, {'user': user})
+    query = "SELECT rolname FROM pg_roles WHERE rolname=(%s)"
+    executed_queries.append(query)
+    cursor.execute(query, [user])
     return cursor.rowcount > 0
 
 
@@ -293,14 +314,16 @@ def user_add(cursor, user, password, role_attr_flags, encrypted, expires, conn_l
     """Create a new database user (role)."""
     # Note: role_attr_flags escaped by parse_role_attrs and encrypted is a
     # literal
-    query_password_data = dict(password=password, expires=expires)
+    query_password_data = []
     query = ['CREATE USER %(user)s' %
              {"user": pg_quote_identifier(user, 'role')}]
     if password is not None and password != '':
         query.append("WITH %(crypt)s" % {"crypt": encrypted})
-        query.append("PASSWORD %(password)s")
+        query.append("PASSWORD '%s'")
+        query_password_data.append(password.encode('utf-8'))
     if expires is not None:
-        query.append("VALID UNTIL %(expires)s")
+        query.append("VALID UNTIL %s")
+        query_password_data.append(expires)
     if conn_limit is not None:
         query.append("CONNECTION LIMIT %(conn_limit)s" % {"conn_limit": conn_limit})
     query.append(role_attr_flags)
@@ -316,7 +339,6 @@ def user_should_we_change_password(current_role_attrs, user, password, encrypted
     Compare the proposed password with the existing one, comparing
     hashes if encrypted. If we can't access it assume yes.
     """
-
     if current_role_attrs is None:
         # on some databases, E.g. AWS RDS instances, there is no access to
         # the pg_authid relation to check the pre-existing password, so we
@@ -335,22 +357,21 @@ def user_should_we_change_password(current_role_attrs, user, password, encrypted
         #  3: The size of the 'md5' prefix
         # When the provided password looks like a MD5-hash, value of
         # 'encrypted' is ignored.
-        elif (password.startswith('md5') and len(password) == 32 + 3) or encrypted == 'UNENCRYPTED':
+        elif (password.startswith('md5') and len(password) == 32 + 3) or encrypted == UNENCRYPTED_VALUE:
             if password != current_role_attrs['rolpassword']:
                 pwchanging = True
         elif encrypted == 'ENCRYPTED':
             hashed_password = 'md5{0}'.format(md5(to_bytes(password) + to_bytes(user)).hexdigest())
             if hashed_password != current_role_attrs['rolpassword']:
                 pwchanging = True
-
     return pwchanging
 
 
 def user_alter(db_connection, module, user, password, role_attr_flags, encrypted, expires, no_password_changes, conn_limit):
     """Change user password and/or attributes. Return True if changed, False otherwise."""
     changed = False
-
-    cursor = db_connection.cursor(cursor_factory=DictCursor)
+    global log
+    cursor = db_connection.cursor()
     # Note: role_attr_flags escaped by parse_role_attrs and encrypted is a
     # literal
     if user == 'PUBLIC':
@@ -365,25 +386,25 @@ def user_alter(db_connection, module, user, password, role_attr_flags, encrypted
     if not no_password_changes and (password is not None or role_attr_flags != '' or expires is not None or conn_limit is not None):
         # Select password and all flag-like columns in order to verify changes.
         try:
-            select = "SELECT * FROM pg_authid where rolname=%(user)s"
-            cursor.execute(select, {"user": user})
+            select = "SELECT * FROM pg_authid where rolname=(%s)"
+            cursor.execute(select, [user])
             # Grab current role attributes.
-            current_role_attrs = cursor.fetchone()
-        except psycopg2.ProgrammingError:
+            current_role_attrs = dict_wrap(cursor, cursor.fetchone())
+        except cursor.connection.ProgrammingError:
             current_role_attrs = None
             db_connection.rollback()
-
         pwchanging = user_should_we_change_password(current_role_attrs, user, password, encrypted)
+
 
         if current_role_attrs is None:
             try:
                 # AWS RDS instances does not allow user to access pg_authid
                 # so try to get current_role_attrs from pg_roles tables
-                select = "SELECT * FROM pg_roles where rolname=%(user)s"
-                cursor.execute(select, {"user": user})
+                select = "SELECT * FROM pg_roles where rolname=(%s)"
+                cursor.execute(select, [user])
                 # Grab current role attributes from pg_roles
-                current_role_attrs = cursor.fetchone()
-            except psycopg2.ProgrammingError as e:
+                current_role_attrs = dict_wrap(cursor, cursor.fetchone())
+            except cursor.connection.ProgrammingError as e:
                 db_connection.rollback()
                 module.fail_json(msg="Failed to get role details for current user %s: %s" % (user, e))
 
@@ -413,25 +434,28 @@ def user_alter(db_connection, module, user, password, role_attr_flags, encrypted
             return False
 
         alter = ['ALTER USER %(user)s' % {"user": pg_quote_identifier(user, 'role')}]
+        query_password_data = []
         if pwchanging:
             if password != '':
                 alter.append("WITH %(crypt)s" % {"crypt": encrypted})
-                alter.append("PASSWORD %(password)s")
+                # BROKEN
+                alter.append("PASSWORD '%(password)s'" % {"password": password})
+                # query_password_data.append(password)
             else:
                 alter.append("WITH PASSWORD NULL")
             alter.append(role_attr_flags)
         elif role_attr_flags:
             alter.append('WITH %s' % role_attr_flags)
         if expires is not None:
-            alter.append("VALID UNTIL %(expires)s")
+            alter.append("VALID UNTIL (%s)")
+            query_password_data.append(expires)
         if conn_limit is not None:
             alter.append("CONNECTION LIMIT %(conn_limit)s" % {"conn_limit": conn_limit})
-
-        query_password_data = dict(password=password, expires=expires)
         try:
-            cursor.execute(' '.join(alter), query_password_data)
+            cursor.execute(' '.join(alter), (query_password_data,))
+            log += cursor.connection.log
             changed = True
-        except psycopg2.InternalError as e:
+        except cursor.connection.InternalError as e:
             if e.pgcode == '25006':
                 # Handle errors due to read-only transactions indicated by pgcode 25006
                 # ERROR:  cannot execute ALTER ROLE in a read-only transaction
@@ -439,8 +463,8 @@ def user_alter(db_connection, module, user, password, role_attr_flags, encrypted
                 module.fail_json(msg=e.pgerror, exception=traceback.format_exc())
                 return changed
             else:
-                raise psycopg2.InternalError(e)
-        except psycopg2.NotSupportedError as e:
+                raise cursor.connection.InternalError(e)
+        except cursor.connection.NotSupportedError as e:
             module.fail_json(msg=e.pgerror, exception=traceback.format_exc())
 
     elif no_password_changes and role_attr_flags != '':
@@ -448,7 +472,7 @@ def user_alter(db_connection, module, user, password, role_attr_flags, encrypted
         select = "SELECT * FROM pg_roles where rolname=%(user)s"
         cursor.execute(select, {"user": user})
         # Grab current role attributes.
-        current_role_attrs = cursor.fetchone()
+        current_role_attrs = dict_wrap(cursor, cursor.fetchone())
 
         role_attr_flags_changing = False
 
@@ -474,7 +498,7 @@ def user_alter(db_connection, module, user, password, role_attr_flags, encrypted
 
         try:
             cursor.execute(' '.join(alter))
-        except psycopg2.InternalError as e:
+        except cursor.connection.InternalError as e:
             if e.pgcode == '25006':
                 # Handle errors due to read-only transactions indicated by pgcode 25006
                 # ERROR:  cannot execute ALTER ROLE in a read-only transaction
@@ -482,11 +506,11 @@ def user_alter(db_connection, module, user, password, role_attr_flags, encrypted
                 module.fail_json(msg=e.pgerror, exception=traceback.format_exc())
                 return changed
             else:
-                raise psycopg2.InternalError(e)
+                raise cursor.connection.InternalError(e)
 
         # Grab new role attributes.
         cursor.execute(select, {"user": user})
-        new_role_attrs = cursor.fetchone()
+        new_role_attrs = dict_wrap(cursor, cursor.fetchone())
 
         # Detect any differences between current_ and new_role_attrs.
         changed = current_role_attrs != new_role_attrs
@@ -753,7 +777,10 @@ def get_valid_flags_by_version(cursor):
     Some role attributes were introduced after certain versions. We want to
     compile a list of valid flags against the current Postgres version.
     """
-    current_version = cursor.connection.server_version
+    version_tuple_str = [tple[1] for tple in cursor.connection.parameter_statuses if tple[0] == b'server_version'][
+        0].decode('utf-8')
+    version_list = (version_tuple_str.split('.') + [0])[0:3]
+    current_version = int(''.join(["{:02}".format(int(x)) for x in version_list]))
 
     return [
         flag
@@ -847,6 +874,7 @@ class PgMembership():
     def __role_exists(self, role):
         return exec_sql(self, "SELECT 1 FROM pg_roles WHERE rolname = '%s'" % role, add_to_executed=False)
 
+
 # ===========================================
 # Module execution.
 #
@@ -885,7 +913,9 @@ def main():
     if module.params["encrypted"]:
         encrypted = "ENCRYPTED"
     else:
-        encrypted = "UNENCRYPTED"
+        module.fail_json(msg="Setting 'encrypted = false' is not supported at the moment")
+        # encrypted = UNENCRYPTED_VALUE
+        # should be just '' since Postgres 10
     expires = module.params["expires"]
     conn_limit = module.params["conn_limit"]
     role_attr_flags = module.params["role_attr_flags"]

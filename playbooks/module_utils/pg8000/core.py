@@ -6,7 +6,6 @@ from hashlib import md5
 from itertools import count
 from struct import Struct
 
-# !!!TNT!!!
 try:
     import json
     import ansible.module_utils.scramp
@@ -67,6 +66,13 @@ cccc_pack, cccc_unpack = pack_funcs("cccc")
 
 __author__ = "Mathieu Fenniak"
 
+# Contribution:
+# pg8000 driver adaptation for Ansible drop-in
+# (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
+__authors__ = ["Mathieu Fenniak", "Sergey Pechenko"]
 
 NULL_BYTE = b"\x00"
 
@@ -348,6 +354,8 @@ class CoreConnection:
         self.in_transaction = False
 
         self.statusmessage = ''
+
+        self.log = []
 
     def register_out_adapter(self, typ, oid, out_func):
         self.py_types[typ] = (oid, out_func)
@@ -652,7 +660,9 @@ class CoreConnection:
                 oids = param_oids
             else:
                 oids = [(p if i is None else i) for p, i in zip(param_oids, input_oids)]
-
+            self.log.append(f"Query: {statement}")
+            self.log.append(f"Vals: {vals}")
+            self.log.append(f"OIDs: {oids}")
             self.send_PARSE(NULL_BYTE, statement, oids)
             self._write(SYNC_MSG)
             self._flush()

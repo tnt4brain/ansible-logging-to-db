@@ -4,6 +4,11 @@
 # Copyright: (c) 2019, Andrew Klychkov (@Andersson007) <aaklychkov@mail.ru>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -457,12 +462,6 @@ settings:
 
 from fnmatch import fnmatch
 
-try:
-    from psycopg2.extras import DictCursor
-except ImportError:
-    # psycopg2 is checked by connect_to_db()
-    # from ansible.module_utils.postgres
-    pass
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.postgres import (
@@ -498,7 +497,7 @@ class PgDbConn(object):
         """
         conn_params = get_conn_params(self.module, self.module.params, warn_db_default=False)
         self.db_conn = connect_to_db(self.module, conn_params)
-        return self.db_conn.cursor(cursor_factory=DictCursor)
+        return self.db_conn.cursor()
 
     def reconnect(self, dbname):
         """Reconnect to another database and return a PostgreSQL cursor object.

@@ -1,5 +1,6 @@
 /*pass*
 /originals/**
+/run.sh
 /playbooks/connection_plugins/**
 **/__pycache__/**
 

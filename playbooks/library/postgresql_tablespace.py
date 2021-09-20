@@ -6,6 +6,11 @@
 # Copyright: (c) 2019, Andrew Klychkov (@Andersson007) <aaklychkov@mail.ru>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import (absolute_import, division, print_function)
 __metaclass__ = type
 
@@ -171,16 +176,6 @@ state:
     type: str
     sample: 'present'
 '''
-
-try:
-    from psycopg2 import __version__ as PSYCOPG2_VERSION
-    from psycopg2.extras import DictCursor
-    from psycopg2.extensions import ISOLATION_LEVEL_AUTOCOMMIT as AUTOCOMMIT
-    from psycopg2.extensions import ISOLATION_LEVEL_READ_COMMITTED as READ_COMMITTED
-except ImportError:
-    # psycopg2 is checked by connect_to_db()
-    # from ansible.module_utils.postgres
-    pass
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.database import pg_quote_identifier
@@ -408,14 +403,11 @@ def main():
 
     conn_params = get_conn_params(module, module.params, warn_db_default=False)
     db_connection = connect_to_db(module, conn_params, autocommit=True)
-    cursor = db_connection.cursor(cursor_factory=DictCursor)
+    cursor = db_connection.cursor()
 
     # Change autocommit to False if check_mode:
     if module.check_mode:
-        if PSYCOPG2_VERSION >= '2.4.2':
-            db_connection.set_session(autocommit=False)
-        else:
-            db_connection.set_isolation_level(READ_COMMITTED)
+        db_connection.autocommit=False
 
     # Set defaults:
     autocommit = False
@@ -440,27 +432,21 @@ def main():
 
         # Because CREATE TABLESPACE can not be run inside the transaction block:
         autocommit = True
-        if PSYCOPG2_VERSION >= '2.4.2':
-            db_connection.set_session(autocommit=True)
-        else:
-            db_connection.set_isolation_level(AUTOCOMMIT)
+        db_connection.autocommit=True
 
         changed = tblspace.create(location)
 
     # Drop non-existing tablespace:
     elif not tblspace.exists and state == 'absent':
         # Nothing to do:
-        module.fail_json(msg="Tries to drop nonexistent tablespace '%s'" % tblspace.name)
+        #???? module.fail_json(msg="Tries to drop nonexistent tablespace '%s'" % tblspace.name)
+        changed = False
 
     # Drop existing tablespace:
     elif tblspace.exists and state == 'absent':
         # Because DROP TABLESPACE can not be run inside the transaction block:
         autocommit = True
-        if PSYCOPG2_VERSION >= '2.4.2':
-            db_connection.set_session(autocommit=True)
-        else:
-            db_connection.set_isolation_level(AUTOCOMMIT)
-
+        db_connection.autocommit=True
         changed = tblspace.drop()
 
     # Rename tablespace:
@@ -495,7 +481,7 @@ def main():
     # Make return values:
     kw = dict(
         changed=changed,
-        state='present',
+        state=state,
         tablespace=tblspace.name,
         owner=tblspace.owner,
         queries=tblspace.executed_queries,
@@ -503,14 +489,8 @@ def main():
         location=tblspace.location,
     )
 
-    if state == 'present':
-        kw['state'] = 'present'
-
-        if tblspace.new_name:
-            kw['newname'] = tblspace.new_name
-
-    elif state == 'absent':
-        kw['state'] = 'absent'
+    if state == 'present' and tblspace.new_name:
+        kw['newname'] = tblspace.new_name
 
     module.exit_json(**kw)
 

@@ -6,4 +6,5 @@ all:
         localhost:
           ansible_connection: local
           ansible_python_interpreter: /usr/bin/python3
-
+      vars:
+        telegram_chat: '@pro_ansible'

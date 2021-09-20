@@ -4,6 +4,11 @@
 # Copyright: (c) 2018, Andrew Klychkov (@Andersson007) <aaklychkov@mail.ru>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -156,13 +161,6 @@ context:
   sample: user
 '''
 
-try:
-    from psycopg2.extras import DictCursor
-except Exception:
-    # psycopg2 is checked by connect_to_db()
-    # from ansible.module_utils.postgres
-    pass
-
 from copy import deepcopy
 
 from ansible.module_utils.basic import AnsibleModule
@@ -185,9 +183,9 @@ POSSIBLE_SIZE_UNITS = ("mb", "gb", "tb")
 
 def param_get(cursor, module, name):
     query = ("SELECT name, setting, unit, context, boot_val "
-             "FROM pg_settings WHERE name = %(name)s")
+             "FROM pg_settings WHERE name = %s")
     try:
-        cursor.execute(query, {'name': name})
+        cursor.execute(query, [name])
         info = cursor.fetchall()
         cursor.execute("SHOW %s" % name)
         val = cursor.fetchone()
@@ -311,10 +309,11 @@ def main():
 
     conn_params = get_conn_params(module, module.params, warn_db_default=False)
     db_connection = connect_to_db(module, conn_params, autocommit=True)
-    cursor = db_connection.cursor(cursor_factory=DictCursor)
+    cursor = db_connection.cursor()
 
     kw = {}
     # Check server version (needs 9.4 or later):
+
     ver = db_connection.server_version
     if ver < PG_REQ_VER:
         module.warn("PostgreSQL is %s version but %s or later is required" % (ver, PG_REQ_VER))
@@ -404,7 +403,7 @@ def main():
     # Reconnect and recheck current value:
     if context in ('sighup', 'superuser-backend', 'backend', 'superuser', 'user'):
         db_connection = connect_to_db(module, conn_params, autocommit=True)
-        cursor = db_connection.cursor(cursor_factory=DictCursor)
+        cursor = db_connection.cursor()
 
         res = param_get(cursor, module, name)
         # f_ means 'final'

@@ -4,6 +4,11 @@
 # Copyright: (c) 2018-2019, Andrey Klychkov (@Andersson007) <aaklychkov@mail.ru>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -235,12 +240,6 @@ valid:
   sample: true
 '''
 
-try:
-    from psycopg2.extras import DictCursor
-except ImportError:
-    # psycopg2 is checked by connect_to_db()
-    # from ansible.module_utils.postgres
-    pass
 
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.postgres import (
@@ -325,9 +324,9 @@ class Index(object):
                  "ON i.indexname = c.relname "
                  "JOIN pg_catalog.pg_index AS pi "
                  "ON c.oid = pi.indexrelid "
-                 "WHERE i.indexname = %(name)s")
+                 "WHERE i.indexname = %s")
 
-        res = exec_sql(self, query, query_params={'name': self.name}, add_to_executed=False)
+        res = exec_sql(self, query, query_params=[self.name], add_to_executed=False)
         if res:
             self.exists = True
             self.info = dict(
@@ -493,7 +492,7 @@ def main():
 
     conn_params = get_conn_params(module, module.params)
     db_connection = connect_to_db(module, conn_params, autocommit=True)
-    cursor = db_connection.cursor(cursor_factory=DictCursor)
+    cursor = db_connection.cursor()
 
     # Set defaults:
     changed = False

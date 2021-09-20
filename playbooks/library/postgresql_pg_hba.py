@@ -3,6 +3,11 @@
 # Copyright: (c) 2019, Sebastiaan Mannem (@sebasmannem) <sebastiaan.mannem@enterprisedb.com>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
 
 '''
@@ -200,8 +205,8 @@ else:
 
 import tempfile
 import shutil
-from ansible.module_utils.basic import AnsibleModule, missing_required_lib
-# from ansible.module_utils.postgres import postgres_common_argument_spec
+from ansible.module_utils.basic import AnsibleModule
+
 
 PG_HBA_METHODS = ["trust", "reject", "md5", "password", "gss", "sspi", "krb5", "ident", "peer",
                   "ldap", "radius", "cert", "pam", "scram-sha-256"]
@@ -686,7 +691,7 @@ def main():
         supports_check_mode=True
     )
     if not HAS_IPADDRESS:
-        module.fail_json(msg=missing_required_lib('psycopg2'), exception=IPADDRESS_IMP_ERR)
+        module.fail_json(msg="ipaddress moudle not found")
 
     contype = module.params["contype"]
     create = bool(module.params["create"] or module.check_mode)

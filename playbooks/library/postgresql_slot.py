@@ -4,6 +4,11 @@
 # Copyright: (c) 2019, John Scalia (@jscalia), Andrew Klychkov (@Andersson007) <aaklychkov@mail.ru>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
 __metaclass__ = type
 
@@ -138,13 +143,6 @@ queries:
   sample: [ "SELECT pg_create_physical_replication_slot('physical_one', False, False)" ]
 '''
 
-try:
-    from psycopg2.extras import DictCursor
-except ImportError:
-    # psycopg2 is checked by connect_to_db()
-    # from ansible.module_utils.postgres
-    pass
-
 from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.postgres import (
     connect_to_db,
@@ -168,6 +166,10 @@ class PgSlot(object):
         self.__slot_exists()
         self.changed = False
         self.executed_queries = []
+        version_tuple_str = [tple[1] for tple in cursor.connection.parameter_statuses if tple[0] == b'server_version'][
+            0].decode('utf-8')
+        version_list = (version_tuple_str.split('.') + [0])[0:3]
+        self.server_version = int(''.join(["{:02}".format(int(x)) for x in version_list]))
 
     def create(self, kind='physical', immediately_reserve=False, output_plugin=False, just_check=False):
         if self.exists:
@@ -181,33 +183,35 @@ class PgSlot(object):
         if just_check:
             return None
 
+
         if kind == 'physical':
             # Check server version (needs for immedately_reserverd needs 9.6+):
-            if self.cursor.connection.server_version < 96000:
-                query = "SELECT pg_create_physical_replication_slot(%(name)s)"
-
+            param_list = [self.name]
+            if self.server_version < 96000:
+                query = "SELECT pg_create_physical_replication_slot(%s)"
             else:
-                query = "SELECT pg_create_physical_replication_slot(%(name)s, %(i_reserve)s)"
+                query = "SELECT pg_create_physical_replication_slot(%s, %s)"
+                param_list.append(immediately_reserve)
 
             self.changed = exec_sql(self, query,
-                                    query_params={'name': self.name, 'i_reserve': immediately_reserve},
+                                    query_params=param_list,
                                     ddl=True)
 
         elif kind == 'logical':
-            query = "SELECT pg_create_logical_replication_slot(%(name)s, %(o_plugin)s)"
+            query = "SELECT pg_create_logical_replication_slot(%s, %s)"
             self.changed = exec_sql(self, query,
-                                    query_params={'name': self.name, 'o_plugin': output_plugin}, ddl=True)
+                                    query_params=[self.name, output_plugin], ddl=True)
 
     def drop(self):
         if not self.exists:
             return False
 
-        query = "SELECT pg_drop_replication_slot(%(name)s)"
-        self.changed = exec_sql(self, query, query_params={'name': self.name}, ddl=True)
+        query = "SELECT pg_drop_replication_slot(%s)"
+        self.changed = exec_sql(self, query, query_params=[self.name], ddl=True)
 
     def __slot_exists(self):
-        query = "SELECT slot_type FROM pg_replication_slots WHERE slot_name = %(name)s"
-        res = exec_sql(self, query, query_params={'name': self.name}, add_to_executed=False)
+        query = "SELECT slot_type FROM pg_replication_slots WHERE slot_name = %s"
+        res = exec_sql(self, query, query_params=[self.name], add_to_executed=False)
         if res:
             self.exists = True
             self.kind = res[0][0]
@@ -257,7 +261,7 @@ def main():
 
     conn_params = get_conn_params(module, module.params, warn_db_default=warn_db_default)
     db_connection = connect_to_db(module, conn_params, autocommit=True)
-    cursor = db_connection.cursor(cursor_factory=DictCursor)
+    cursor = db_connection.cursor()
 
     ##################################
     # Create an object and do main job

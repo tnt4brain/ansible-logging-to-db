@@ -5,7 +5,13 @@
 # Copyright: (c) 2019, Tobias Birkefeld (@tcraxs) <t@craxs.de>
 # GNU General Public License v3.0+ (see COPYING or https://www.gnu.org/licenses/gpl-3.0.txt)
 
+# Contribution:
+# Adaptation to pg8000 driver (C) Sergey Pechenko <10977752+tnt4brain@users.noreply.github.com>, 2021
+# Welcome to https://t.me/pro_ansible for discussion and support
+# License: please see above
+
 from __future__ import absolute_import, division, print_function
+
 __metaclass__ = type
 
 ANSIBLE_METADATA = {'metadata_version': '1.1',
@@ -391,19 +397,19 @@ queries:
 
 import traceback
 
-PSYCOPG2_IMP_ERR = None
-try:
-    import psycopg2
-    import psycopg2.extensions
-except ImportError:
-    PSYCOPG2_IMP_ERR = traceback.format_exc()
-    psycopg2 = None
+from ansible.module_utils.postgres import (
+    connect_to_db,
+    exec_sql,
+    get_conn_params,
+    postgres_common_argument_spec,
+)
 
 # import module snippets
-from ansible.module_utils.basic import AnsibleModule, missing_required_lib
+from ansible.module_utils.basic import AnsibleModule
 from ansible.module_utils.database import pg_quote_identifier
-from ansible.module_utils.postgres import postgres_common_argument_spec
+from ansible.module_utils.postgres import postgres_common_argument_spec, connect_to_db
 from ansible.module_utils._text import to_native
+
 
 VALID_PRIVS = frozenset(('SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE',
                          'REFERENCES', 'TRIGGER', 'CREATE', 'CONNECT',
@@ -449,7 +455,8 @@ def partial(f, *args, **kwargs):
 
 
 class Connection(object):
-    """Wrapper around a psycopg2 connection with some convenience methods"""
+    """Wrapper around a pg8000 connection with some convenience methods"""
+    SCHEMA_DOES_NOT_EXIST_ERROR = 'Schema "%s" does not exist.'
 
     def __init__(self, params, module):
         self.database = params.database
@@ -457,41 +464,39 @@ class Connection(object):
         # To use defaults values, keyword arguments must be absent, so
         # check which values are empty and don't include in the **kw
         # dictionary
-        params_map = {
-            "host": "host",
-            "login": "user",
-            "password": "password",
-            "port": "port",
-            "database": "database",
-            "ssl_mode": "sslmode",
-            "ca_cert": "sslrootcert"
-        }
-
-        kw = dict((params_map[k], getattr(params, k)) for k in params_map
-                  if getattr(params, k) != '' and getattr(params, k) is not None)
-
-        # If a unix_socket is specified, incorporate it here.
-        is_localhost = "host" not in kw or kw["host"] == "" or kw["host"] == "localhost"
-        if is_localhost and params.unix_socket != "":
-            kw["host"] = params.unix_socket
-
-        sslrootcert = params.ca_cert
-        if psycopg2.__version__ < '2.4.3' and sslrootcert is not None:
-            raise ValueError('psycopg2 must be at least 2.4.3 in order to user the ca_cert parameter')
-
-        self.connection = psycopg2.connect(**kw)
-        self.cursor = self.connection.cursor()
+        # params_map = {
+        #     "host": "host",
+        #     "login": "user",
+        #     "password": "password",
+        #     "port": "port",
+        #     "database": "database",
+        #     "ssl_mode": "sslmode",
+        #     "ca_cert": "sslrootcert"
+        # }
+        #
+        # kw = dict((params_map[k], getattr(params, k)) for k in params_map
+        #           if getattr(params, k) != '' and getattr(params, k) is not None)
+        #
+        # # If a unix_socket is specified, incorporate it here.
+        # is_localhost = "host" not in kw or kw["host"] == "" or kw["host"] == "localhost"
+        # if is_localhost and params.unix_socket != "":
+        #     kw["host"] = params.unix_socket
+        #
+        # sslrootcert = params.ca_cert
+        conn_params = get_conn_params(module, module.params)
+        self.conn = connect_to_db(module, conn_params, autocommit=module.autocommit)
+        self.cursor = self.conn.cursor()
 
     def commit(self):
-        self.connection.commit()
+        self.conn.commit()
 
     def rollback(self):
-        self.connection.rollback()
+        self.conn.rollback()
 
     @property
     def encoding(self):
         """Connection encoding in Python-compatible form"""
-        return psycopg2.extensions.encodings[self.connection.encoding]
+        raise self.conn.conn.ProgrammingError("These are not the encodings you are looking for")
 
     # Methods for querying database objects
 
@@ -507,7 +512,7 @@ class Connection(object):
 
     def get_all_tables_in_schema(self, schema):
         if not self.schema_exists(schema):
-            raise Error('Schema "%s" does not exist.' % schema)
+            raise Error(Connection.SCHEMA_DOES_NOT_EXIST_ERROR % schema)
         query = """SELECT relname
                    FROM pg_catalog.pg_class c
                    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -517,7 +522,7 @@ class Connection(object):
 
     def get_all_sequences_in_schema(self, schema):
         if not self.schema_exists(schema):
-            raise Error('Schema "%s" does not exist.' % schema)
+            raise Error(Connection.SCHEMA_DOES_NOT_EXIST_ERROR % schema)
         query = """SELECT relname
                    FROM pg_catalog.pg_class c
                    JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
@@ -527,7 +532,7 @@ class Connection(object):
 
     def get_all_functions_in_schema(self, schema):
         if not self.schema_exists(schema):
-            raise Error('Schema "%s" does not exist.' % schema)
+            raise Error(Connection.SCHEMA_DOES_NOT_EXIST_ERROR % schema)
         query = """SELECT p.proname, oidvectortypes(p.proargtypes)
                     FROM pg_catalog.pg_proc p
                     JOIN pg_namespace n ON n.oid = p.pronamespace
@@ -686,11 +691,11 @@ class Connection(object):
                     f, args = obj.split('(', 1)
                 except Exception:
                     raise Error('Illegal function signature: "%s".' % obj)
-                obj_ids.append('"%s"."%s"(%s' % (schema_qualifier, f, args))
+                obj_ids.append('%s.%s(%s' % (schema_qualifier, f, args))
         elif obj_type in ['table', 'sequence']:
-            obj_ids = ['"%s"."%s"' % (schema_qualifier, o) for o in objs]
+            obj_ids = ['%s.%s' % (schema_qualifier, o) for o in objs]
         else:
-            obj_ids = ['"%s"' % o for o in objs]
+            obj_ids = ['%s' % o for o in objs]
 
         # set_what: SQL-fragment specifying what to set for the target roles:
         # Either group membership or privileges on objects of a certain type
@@ -745,7 +750,7 @@ class Connection(object):
             .set_what(set_what) \
             .for_objs(objs) \
             .build()
-
+        # self.module.fail_json(msg=query.__repr__())
         executed_queries.append(query)
         self.cursor.execute(query)
         status_after = get_status(objs)
@@ -815,9 +820,10 @@ class QueryBuilder(object):
         for obj in self._objs:
             if self._as_who:
                 self.query.append(
-                    'ALTER DEFAULT PRIVILEGES FOR ROLE {0} IN SCHEMA {1} REVOKE ALL ON {2} FROM {3};'.format(self._as_who,
-                                                                                                             self._schema, obj,
-                                                                                                             self._for_whom))
+                    'ALTER DEFAULT PRIVILEGES FOR ROLE {0} IN SCHEMA {1} REVOKE ALL ON {2} FROM {3};'.format(
+                        self._as_who,
+                        self._schema, obj,
+                        self._for_whom))
             else:
                 self.query.append(
                     'ALTER DEFAULT PRIVILEGES IN SCHEMA {0} REVOKE ALL ON {1} FROM {2};'.format(self._schema, obj,
@@ -859,7 +865,8 @@ class QueryBuilder(object):
                                                                                                          self._for_whom))
         else:
             self.query.append(
-                'ALTER DEFAULT PRIVILEGES IN SCHEMA {0} GRANT USAGE ON TYPES TO {1}'.format(self._schema, self._for_whom))
+                'ALTER DEFAULT PRIVILEGES IN SCHEMA {0} GRANT USAGE ON TYPES TO {1}'.format(self._schema,
+                                                                                            self._for_whom))
         self.add_grant_option()
 
     def build_present(self):
@@ -876,9 +883,10 @@ class QueryBuilder(object):
             for obj in ['TABLES', 'SEQUENCES', 'TYPES']:
                 if self._as_who:
                     self.query.append(
-                        'ALTER DEFAULT PRIVILEGES FOR ROLE {0} IN SCHEMA {1} REVOKE ALL ON {2} FROM {3};'.format(self._as_who,
-                                                                                                                 self._schema, obj,
-                                                                                                                 self._for_whom))
+                        'ALTER DEFAULT PRIVILEGES FOR ROLE {0} IN SCHEMA {1} REVOKE ALL ON {2} FROM {3};'.format(
+                            self._as_who,
+                            self._schema, obj,
+                            self._for_whom))
                 else:
                     self.query.append(
                         'ALTER DEFAULT PRIVILEGES IN SCHEMA {0} REVOKE ALL ON {1} FROM {2};'.format(self._schema, obj,
@@ -925,7 +933,7 @@ def main():
     )
 
     fail_on_role = module.params['fail_on_role']
-
+    module.autocommit = not module.check_mode
     # Create type object as namespace for module params
     p = type('Params', (), module.params)
     # param "schema": default, allowed depends on param "type"
@@ -951,26 +959,25 @@ def main():
         module.fail_json(msg='Argument "privs" is required '
                              'for type "%s".' % p.type)
 
-    # Connect to Database
-    if not psycopg2:
-        module.fail_json(msg=missing_required_lib('psycopg2'), exception=PSYCOPG2_IMP_ERR)
+    # Connect to DB and make cursor object:
     try:
         conn = Connection(p, module)
-    except psycopg2.Error as e:
-        module.fail_json(msg='Could not connect to database: %s' % to_native(e), exception=traceback.format_exc())
     except TypeError as e:
         if 'sslrootcert' in e.args[0]:
             module.fail_json(msg='Postgresql server must be at least version 8.4 to support sslrootcert')
         module.fail_json(msg="unable to connect to database: %s" % to_native(e), exception=traceback.format_exc())
     except ValueError as e:
-        # We raise this when the psycopg library is too old
+        # We raise this when the driver library is too old
         module.fail_json(msg=to_native(e))
+    except BaseException as e:
+        module.fail_json(msg='Could not connect to database: %s' % to_native(e), exception=traceback.format_exc())
 
     if p.session_role:
         try:
             conn.cursor.execute('SET ROLE %s' % pg_quote_identifier(p.session_role, 'role'))
         except Exception as e:
-            module.fail_json(msg="Could not switch to role %s: %s" % (p.session_role, to_native(e)), exception=traceback.format_exc())
+            module.fail_json(msg="Could not switch to role %s: %s" % (p.session_role, to_native(e)),
+                             exception=traceback.format_exc())
 
     try:
         # privs
@@ -1046,13 +1053,13 @@ def main():
             fail_on_role=fail_on_role,
         )
 
-    except Error as e:
+    except conn.conn.ProgrammingError as e:
         conn.rollback()
-        module.fail_json(msg=e.message, exception=traceback.format_exc())
+        module.fail_json(msg=to_native(e), exception=traceback.format_exc())
 
-    except psycopg2.Error as e:
+    except conn.conn.DatabaseError as e:
         conn.rollback()
-        module.fail_json(msg=to_native(e.message))
+        module.fail_json(msg=to_native(e))
 
     if module.check_mode:
         conn.rollback()
